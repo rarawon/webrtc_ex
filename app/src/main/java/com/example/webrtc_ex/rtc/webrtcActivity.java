@@ -13,6 +13,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.ImageView;
+import android.widget.Toast;
 
 import com.example.webrtc_ex.R;
 
@@ -24,6 +25,7 @@ import org.webrtc.Camera1Enumerator;
 import org.webrtc.Camera2Enumerator;
 import org.webrtc.CameraEnumerator;
 
+import org.webrtc.CameraVideoCapturer;
 import org.webrtc.DataChannel;
 import org.webrtc.EglBase;
 import org.webrtc.IceCandidate;
@@ -133,6 +135,7 @@ public class webrtcActivity extends AppCompatActivity {
     ImageView micCtl;
     ImageView exitBtn;
 
+    private VideoCapturer videoCapturer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -153,6 +156,7 @@ public class webrtcActivity extends AppCompatActivity {
             public void onClick(View view) {
                 // switchBtn을 클릭했을 때의 동작을 처리하는 코드를 작성하세요
                 // 예: 전면/후면 카메라 전환 기능 등
+                Toast.makeText(webrtcActivity.this, "화면 전환", Toast.LENGTH_SHORT).show();
                 switchCamera();
             }
         });
@@ -162,6 +166,7 @@ public class webrtcActivity extends AppCompatActivity {
             public void onClick(View view) {
                 // micCtl을 클릭했을 때의 동작을 처리하는 코드를 작성하세요
                 // 예: 마이크 뮤트/언뮤트 기능 등
+                Toast.makeText(webrtcActivity.this, "음소거", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -170,6 +175,7 @@ public class webrtcActivity extends AppCompatActivity {
             public void onClick(View view) {
                 // exitBtn을 클릭했을 때의 동작을 처리하는 코드를 작성하세요
                 // 예: 앱 종료 기능 등
+                Toast.makeText(webrtcActivity.this, "나가기", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -308,25 +314,9 @@ public class webrtcActivity extends AppCompatActivity {
      * 전/후면 카메라 전환
      */
     private void switchCamera() {
-        // 현재 사용 중인 비디오 트랙 제거
-        mediaStream.removeTrack(videoTrackFromCamera);
-
-        // 비디오 캡처러 변경
-        VideoCapturer newVideoCapturer = createVideoCapturer(); // 새로운 비디오 캡처러 생성
-        VideoSource newVideoSource = factory.createVideoSource(newVideoCapturer);
-
-        // 새로운 비디오 트랙 생성 및 미디어 스트림에 추가
-        videoTrackFromCamera = factory.createVideoTrack(VIDEO_TRACK_ID, newVideoSource);
-        mediaStream.addTrack(videoTrackFromCamera);
-
-        // PeerConnection 업데이트
-        peerConnection.removeStream(mediaStream);
-        peerConnection.addStream(mediaStream);
-
-        // 시그널링 서버에 알림
-        sendMessage("switched_camera"); // 시그널링 서버에 전면/후면 전환 메시지 전송
+        CameraVideoCapturer cameraVideoCapturer = (CameraVideoCapturer) videoCapturer;
+        cameraVideoCapturer.switchCamera(null);
     }
-
 
     /**
      * 응답 생성 및 전송하는 메서드
@@ -461,7 +451,7 @@ public class webrtcActivity extends AppCompatActivity {
         audioConstraints = new MediaConstraints();
 
         // 비디오 캡처러 생성
-        VideoCapturer videoCapturer = createVideoCapturer();
+        videoCapturer = createVideoCapturer();
 
         // 비디오 소스 생성 및 캡처러로부터 비디오 캡처 시작
         videoSource = factory.createVideoSource(videoCapturer);
@@ -608,7 +598,6 @@ public class webrtcActivity extends AppCompatActivity {
     private VideoCapturer createCameraCapturer(CameraEnumerator enumerator) {
         final String[] deviceNames = enumerator.getDeviceNames();
 
-        // 후면 카메라 시도
         for (String deviceName : deviceNames) {
             if (!enumerator.isFrontFacing(deviceName)) {
                 VideoCapturer videoCapturer = enumerator.createCapturer(deviceName, null);
@@ -619,7 +608,6 @@ public class webrtcActivity extends AppCompatActivity {
             }
         }
 
-        // 전면 카메라 먼저 시도
         for (String deviceName : deviceNames) {
             if (enumerator.isFrontFacing(deviceName)) {
                 VideoCapturer videoCapturer = enumerator.createCapturer(deviceName, null);
@@ -632,6 +620,8 @@ public class webrtcActivity extends AppCompatActivity {
 
         return null;
     }
+
+
 
     /**
      * Camera2 API를 사용할지 여부를 반환하는 메서드
