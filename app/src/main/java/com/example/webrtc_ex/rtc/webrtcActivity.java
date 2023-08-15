@@ -78,7 +78,7 @@ public class webrtcActivity extends AppCompatActivity {
     public static final int VIDEO_RESOLUTION_HEIGHT = 720;
 
     // 초당 프레임 수
-    public static final int FPS = 60;
+    public static final int FPS = 30;
 
     // 서버와 통신을 위한 소켓 변수
     private Socket socket;
@@ -141,8 +141,6 @@ public class webrtcActivity extends AppCompatActivity {
 
 
     private boolean isMicMuted = false; // 마이크 음소거 상태를 나타내는 변수
-    private static final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private boolean enableAudio = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -186,6 +184,13 @@ public class webrtcActivity extends AppCompatActivity {
                 // exitBtn을 클릭했을 때의 동작을 처리하는 코드를 작성하세요
                 // 예: 앱 종료 기능 등
                 Toast.makeText(webrtcActivity.this, "나가기", Toast.LENGTH_SHORT).show();
+
+
+                hangup();
+
+                // 액티비티 종료
+                finish();
+
             }
         });
 
@@ -194,12 +199,36 @@ public class webrtcActivity extends AppCompatActivity {
 
     }
 
+    private void hangup() {
+        Log.d(TAG, "hangup");
+
+        socket.emit("bye");
+        socket.close();
+
+        isInitiator = false;
+        isChannelReady = false;
+        isStarted = false;
+
+        // WebRTC 통화 종료 및 관련 리소스 해제
+        if (peerConnection != null) {
+            peerConnection.close();
+            peerConnection.dispose();
+            peerConnection = null;
+        }
+
+        rootEglBase.release();
+        videoCapturer.dispose();
+        PeerConnectionFactory.shutdownInternalTracer();
+
+
+    }
+
+
     @Override
     protected void onDestroy() {
-        if (socket != null) {
-            sendMessage("bye");
-            socket.disconnect();
-        }
+
+        hangup();
+
         super.onDestroy();
     }
 
@@ -214,7 +243,6 @@ public class webrtcActivity extends AppCompatActivity {
 
         return isMicMuted; // 마이크 상태 반환
     }
-
 
 
     /**
@@ -285,7 +313,7 @@ public class webrtcActivity extends AppCompatActivity {
                 isChannelReady = true;
             }).on("log", args -> {
                 for (Object arg : args) {
-                    Log.d(TAG, "connectToSignallingServer: " + String.valueOf(arg));
+                    Log.e(TAG, "sever_log " + String.valueOf(arg));
                 }
             }).on("message", args -> {
                 Log.d(TAG, "connectToSignallingServer: got a message");
@@ -313,9 +341,9 @@ public class webrtcActivity extends AppCompatActivity {
                             IceCandidate candidate = new IceCandidate(message.getString("id"), message.getInt("label"), message.getString("candidate"));
                             peerConnection.addIceCandidate(candidate);
                         }
-                    /*else if (message === 'bye' && isStarted) {
-                    handleRemoteHangup();
-                }*/
+//                    else if (message == "bye" && isStarted) {
+//                    handleRemoteHangup();
+//                }
                     }
                 } catch (JSONException e) {
                     e.printStackTrace();
@@ -373,7 +401,8 @@ public class webrtcActivity extends AppCompatActivity {
         Log.d(TAG, "maybeStart: " + isStarted + " " + isChannelReady);
 
         // 아직 통화가 시작되지 않았고 채널이 준비된 경우
-        if (!isStarted && isChannelReady) {
+//        if (!isStarted && isChannelReady) {
+        if (isChannelReady) {
             isStarted = true;
 
             // 주최자인 경우 통화 시작
@@ -646,13 +675,10 @@ public class webrtcActivity extends AppCompatActivity {
     }
 
 
-
     /**
      * Camera2 API를 사용할지 여부를 반환하는 메서드
      */
     private boolean useCamera2() {
         return Camera2Enumerator.isSupported(this);
     }
-
-
 }
