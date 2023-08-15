@@ -45,6 +45,8 @@ import org.webrtc.VideoTrack;
 
 import java.net.URISyntaxException;
 import java.util.ArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import io.socket.client.IO;
 import io.socket.client.Socket;
@@ -137,6 +139,11 @@ public class webrtcActivity extends AppCompatActivity {
 
     private VideoCapturer videoCapturer;
 
+
+    private boolean isMicMuted = false; // 마이크 음소거 상태를 나타내는 변수
+    private static final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private boolean enableAudio = true;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -167,6 +174,9 @@ public class webrtcActivity extends AppCompatActivity {
                 // micCtl을 클릭했을 때의 동작을 처리하는 코드를 작성하세요
                 // 예: 마이크 뮤트/언뮤트 기능 등
                 Toast.makeText(webrtcActivity.this, "음소거", Toast.LENGTH_SHORT).show();
+
+                boolean enabled = onToggleMic();
+                micCtl.setAlpha(enabled ? 1.0f : 0.3f);
             }
         });
 
@@ -192,6 +202,19 @@ public class webrtcActivity extends AppCompatActivity {
         }
         super.onDestroy();
     }
+
+    private boolean onToggleMic() {
+        isMicMuted = !isMicMuted;
+
+        // 로컬 오디오 트랙의 활성화 여부 설정
+        localAudioTrack.setEnabled(!isMicMuted);
+
+        // UI 업데이트: 버튼의 투명도 설정
+        micCtl.setAlpha(isMicMuted ? 0.3f : 1.0f);
+
+        return isMicMuted; // 마이크 상태 반환
+    }
+
 
 
     /**
@@ -235,6 +258,7 @@ public class webrtcActivity extends AppCompatActivity {
         try {
             // 시그널링 서버 URL 설정
             String serverURL = "http://192.168.0.4:3030/"; // 시그널링 서버 주소
+//            String serverURL = "http://10.0.2.2:3030/"; // 시그널링 서버 주소
             Log.e(TAG, "REPLACE ME: IO Socket:" + serverURL);
             options = new IO.Options();
             options.transports = new String[]{"websocket"}; // 웹소켓 옵션 설정
