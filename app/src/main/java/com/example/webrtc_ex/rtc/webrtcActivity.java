@@ -141,6 +141,8 @@ public class webrtcActivity extends AppCompatActivity {
 
 
     private boolean isMicMuted = false; // 마이크 음소거 상태를 나타내는 변수
+    private static final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private boolean enableAudio = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -402,7 +404,7 @@ public class webrtcActivity extends AppCompatActivity {
 
         // 아직 통화가 시작되지 않았고 채널이 준비된 경우
 //        if (!isStarted && isChannelReady) {
-        if (isChannelReady) {
+        if (!isStarted && isChannelReady) {
             isStarted = true;
 
             // 주최자인 경우 통화 시작
