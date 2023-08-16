@@ -132,6 +132,8 @@ public class webrtcActivity extends AppCompatActivity {
     private VideoTrack videoTrackFromCamera;
     private MediaStream mediaStream;
 
+    private String initiator_id; // 방장일때
+
 
     ImageView switchBtn;
     ImageView micCtl;
@@ -139,6 +141,10 @@ public class webrtcActivity extends AppCompatActivity {
 
     private VideoCapturer videoCapturer;
 
+
+    private String viewerId;
+
+    private String creater_Id;
 
     private boolean isMicMuted = false; // 마이크 음소거 상태를 나타내는 변수
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -197,7 +203,8 @@ public class webrtcActivity extends AppCompatActivity {
         });
 
         // 시작
-        start();
+        // 시그널링 서버에 연결
+        connectToSignallingServer();
 
     }
 
@@ -247,36 +254,78 @@ public class webrtcActivity extends AppCompatActivity {
     }
 
 
-    /**
-     * 권한이 부여된 후 호출되는 메서드. 통화를 시작합니다.
-     */
+    private void doViewer(String viewerId) {
+
+        rootEglBase = EglBase.create();
+
+        Log.e(TAG, "initializeSurfaceViews:  들어옴" + viewerId);
+
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                // 원격 비디오 뷰 초기화
+                mRemoteVideoView = findViewById(R.id.surface_view);
+                // 원격 비디오 뷰에 EGL 컨텍스트를 초기화합니다.
+                mRemoteVideoView.init(rootEglBase.getEglBaseContext(), null);
+                // 하드웨어 스케일러 사용을 활성화합니다.
+                mRemoteVideoView.setEnableHardwareScaler(true);
+                // 비디오 화면을 미러링합니다.
+                mRemoteVideoView.setMirror(false);
+            }
+        });
+
+
+        // 피어 연결 팩토리 초기화
+        initializePeerConnectionFactory();
+
+        // 피어 연결 초기화
+        initializePeerConnections();
+
+        // 메시지 전송
+        socket.emit("get_viewer", viewerId);
+    }
+
     @AfterPermissionGranted(RC_CALL)
-    private void start() {
+    private void doInitiator() {
         // 필요한 권한들
         String[] perms = {Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO};
 
         // 권한이 있는지 확인
         if (EasyPermissions.hasPermissions(this, perms)) {
-            // 시그널링 서버에 연결
-            connectToSignallingServer();
 
-            // 화면 표시를 위한 SurfaceView 초기화
-            initializeSurfaceViews();
+            rootEglBase = EglBase.create();
+
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    // 로컬 비디오 뷰 초기화
+                    mLocalVideoView = findViewById(R.id.surface_view);
+                    // 로컬 비디오 뷰에 EGL 컨텍스트를 초기화합니다.
+                    mLocalVideoView.init(rootEglBase.getEglBaseContext(), null);
+                    // 하드웨어 스케일러 사용을 활성화합니다.
+                    mLocalVideoView.setEnableHardwareScaler(true);
+                    // 비디오 화면을 미러링합니다.
+                    mLocalVideoView.setMirror(false);
+                }
+            });
+
 
             // 피어 연결 팩토리 초기화
             initializePeerConnectionFactory();
 
-            // 카메라로부터 비디오 트랙 생성 및 표시
-            createVideoTrackFromCameraAndShowIt();
-
             // 피어 연결 초기화
             initializePeerConnections();
 
+            // 카메라로부터 비디오 트랙 생성 및 표시
+            createVideoTrackFromCameraAndShowIt();
+
             // 비디오 스트리밍 시작
             startStreamingVideo();
+
         } else {
             // 권한 부여 요청
             EasyPermissions.requestPermissions(this, "Need some permissions", RC_CALL, perms);
+
         }
     }
 
@@ -287,7 +336,7 @@ public class webrtcActivity extends AppCompatActivity {
     private void connectToSignallingServer() {
         try {
             // 시그널링 서버 URL 설정
-            String serverURL = "http://192.168.0.4:3030/"; // 시그널링 서버 주소
+            String serverURL = "http://118.47.145.142:3030/"; // 시그널링 서버 주소
 //            String serverURL = "http://10.0.2.2:3030/"; // 시그널링 서버 주소
             Log.e(TAG, "REPLACE ME: IO Socket:" + serverURL);
             options = new IO.Options();
@@ -303,6 +352,8 @@ public class webrtcActivity extends AppCompatActivity {
             }).on("created", args -> {
                 Log.d(TAG, "connectToSignallingServer: created");
                 isInitiator = true;
+                initiator_id = (String) args[1];
+                doInitiator();
             }).on("full", args -> {
                 Log.d(TAG, "connectToSignallingServer: full");
             }).on("join", args -> {
@@ -310,12 +361,31 @@ public class webrtcActivity extends AppCompatActivity {
                 Log.d(TAG, "connectToSignallingServer: Another peer made a request to join room");
                 Log.d(TAG, "connectToSignallingServer: This peer is the initiator of room");
                 isChannelReady = true;
+                if(isInitiator){
+                    // 피어 연결 팩토리 초기화
+                    initializePeerConnectionFactory();
+
+                    // 피어 연결 초기화
+                    initializePeerConnections();
+
+                    // 비디오 스트리밍 시작
+                    startStreamingVideo();
+                }
             }).on("joined", args -> {
                 Log.d(TAG, "connectToSignallingServer: joined");
                 isChannelReady = true;
+                viewerId = (String) args[1]; // 시청자 ID를 가져옴
+                doViewer(viewerId);
+            }).on("get_viewer", args -> {
+                Log.e(TAG, "connectToSignallingServer:  get_viewer 실행" );
+                viewerId = (String) args[0]; // 시청자 ID를 가져옴
+                Log.e(TAG, "connectToSignallingServer:  get_viewer 실행"+ viewerId );
+                maybeStart(viewerId);
+            }).on("viewer", args -> {
+                isChannelReady = true;
             }).on("log", args -> {
                 for (Object arg : args) {
-                    Log.e(TAG, "sever_log " + String.valueOf(arg));
+//                    Log.e(TAG, "sever_log " + String.valueOf(arg));
                 }
             }).on("message", args -> {
                 Log.d(TAG, "connectToSignallingServer: got a message");
@@ -324,7 +394,8 @@ public class webrtcActivity extends AppCompatActivity {
                     if (args[0] instanceof String) {
                         String message = (String) args[0];
                         if (message.equals("got user media")) {
-                            maybeStart();
+                            String viewerId = null;
+                            maybeStart(viewerId);
                         }
                     } else {
                         JSONObject message = (JSONObject) args[0];
@@ -332,10 +403,12 @@ public class webrtcActivity extends AppCompatActivity {
                         if (message.getString("type").equals("offer")) {
                             Log.d(TAG, "connectToSignallingServer: received an offer " + isInitiator + " " + isStarted);
                             if (!isInitiator && !isStarted) {
-                                maybeStart();
+                                maybeStart(viewerId);
                             }
                             peerConnection.setRemoteDescription(new SimpleSdpObserver(), new SessionDescription(OFFER, message.getString("sdp")));
-                            doAnswer();
+                            viewerId = message.getString("receiver");
+                            creater_Id = message.getString("sender");
+                            doAnswer(viewerId);
                         } else if (message.getString("type").equals("answer") && isStarted) {
                             peerConnection.setRemoteDescription(new SimpleSdpObserver(), new SessionDescription(ANSWER, message.getString("sdp")));
                         } else if (message.getString("type").equals("candidate") && isStarted) {
@@ -375,7 +448,7 @@ public class webrtcActivity extends AppCompatActivity {
     /**
      * 응답 생성 및 전송하는 메서드
      */
-    private void doAnswer() {
+    private void doAnswer(String viewerId) {
         peerConnection.createAnswer(new SimpleSdpObserver() {
             @Override
             public void onCreateSuccess(SessionDescription sessionDescription) {
@@ -387,6 +460,8 @@ public class webrtcActivity extends AppCompatActivity {
                 try {
                     message.put("type", "answer");
                     message.put("sdp", sessionDescription.description);
+                    message.put("sender", viewerId);
+                    message.put("receiver",creater_Id );
                     sendMessage(message);
                 } catch (JSONException e) {
                     e.printStackTrace();
@@ -399,17 +474,19 @@ public class webrtcActivity extends AppCompatActivity {
     /**
      * 통화 시작 여부를 결정하고 필요한 경우 통화를 시작하는 메서드
      */
-    private void maybeStart() {
+    private void maybeStart(String viewerId) {
         Log.d(TAG, "maybeStart: " + isStarted + " " + isChannelReady);
 
         // 아직 통화가 시작되지 않았고 채널이 준비된 경우
 //        if (!isStarted && isChannelReady) {
-        if (!isStarted && isChannelReady) {
+        if (isChannelReady) {
             isStarted = true;
+            Log.e(TAG, "maybeStart: 통화시작 전");
 
             // 주최자인 경우 통화 시작
             if (isInitiator) {
-                doCall();
+                Log.e(TAG, "maybeStart: 통화시작");
+                doCall(viewerId);
             }
         }
     }
@@ -418,7 +495,7 @@ public class webrtcActivity extends AppCompatActivity {
     /**
      * 통화를 시작하고 제안을 생성하고 전송하는 메서드
      */
-    private void doCall() {
+    private void doCall(String viewerId) {
         // 제안에 대한 미디어 제약 조건 설정
         MediaConstraints sdpMediaConstraints = new MediaConstraints();
         sdpMediaConstraints.mandatory.add(
@@ -438,6 +515,8 @@ public class webrtcActivity extends AppCompatActivity {
                 try {
                     message.put("type", "offer");
                     message.put("sdp", sessionDescription.description);
+                    message.put("sender", initiator_id);
+                    message.put("receiver", viewerId);
                     sendMessage(message);
                 } catch (JSONException e) {
                     e.printStackTrace();
@@ -452,34 +531,6 @@ public class webrtcActivity extends AppCompatActivity {
      */
     private void sendMessage(Object message) {
         socket.emit("message", message);
-    }
-
-
-    /**
-     * SurfaceView를 초기화하는 메서드
-     */
-    private void initializeSurfaceViews() {
-        rootEglBase = EglBase.create();
-
-// 로컬 비디오 뷰 초기화
-        mLocalVideoView = findViewById(R.id.surface_view);
-// 로컬 비디오 뷰에 EGL 컨텍스트를 초기화합니다.
-        mLocalVideoView.init(rootEglBase.getEglBaseContext(), null);
-// 하드웨어 스케일러 사용을 활성화합니다.
-        mLocalVideoView.setEnableHardwareScaler(true);
-// 비디오 화면을 미러링합니다.
-        mLocalVideoView.setMirror(false);
-
-// 원격 비디오 뷰 초기화
-        mRemoteVideoView = findViewById(R.id.surface_view2);
-// 원격 비디오 뷰에 EGL 컨텍스트를 초기화합니다.
-        mRemoteVideoView.init(rootEglBase.getEglBaseContext(), null);
-// 하드웨어 스케일러 사용을 활성화합니다.
-        mRemoteVideoView.setEnableHardwareScaler(true);
-// 비디오 화면을 미러링합니다.
-        mRemoteVideoView.setMirror(true);
-
-        // 더 많은 뷰 추가 가능
     }
 
 
@@ -590,6 +641,13 @@ public class webrtcActivity extends AppCompatActivity {
                     message.put("label", iceCandidate.sdpMLineIndex);
                     message.put("id", iceCandidate.sdpMid);
                     message.put("candidate", iceCandidate.sdp);
+                    if(initiator_id != null){
+                        message.put("sender", initiator_id);
+                        message.put("receiver", viewerId);
+                    } else {
+                        message.put("sender", viewerId);
+                        message.put("receiver",creater_Id );
+                    }
 
                     Log.d(TAG, "onIceCandidate: sending candidate " + message);
                     sendMessage(message);
@@ -610,7 +668,7 @@ public class webrtcActivity extends AppCompatActivity {
                 AudioTrack remoteAudioTrack = mediaStream.audioTracks.get(0);
                 remoteAudioTrack.setEnabled(true);
                 remoteVideoTrack.setEnabled(true);
-                remoteVideoTrack.addRenderer(new VideoRenderer(findViewById(R.id.surface_view2)));
+                remoteVideoTrack.addRenderer(new VideoRenderer(findViewById(R.id.surface_view)));
 
             }
 
