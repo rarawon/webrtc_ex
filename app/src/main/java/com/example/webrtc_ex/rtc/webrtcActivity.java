@@ -9,7 +9,10 @@ import static io.socket.client.Socket.EVENT_DISCONNECT;
 import androidx.appcompat.app.AppCompatActivity;
 
 import android.Manifest;
+import android.app.AlertDialog;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.widget.ImageView;
@@ -134,6 +137,7 @@ public class webrtcActivity extends AppCompatActivity {
 
     private String initiator_id; // 방장일때
 
+    private boolean close_room = false;
 
     ImageView switchBtn;
     ImageView micCtl;
@@ -145,6 +149,8 @@ public class webrtcActivity extends AppCompatActivity {
     private String viewerId;
 
     private String creater_Id;
+
+    SpeakerModeManager speakerModeManager;
 
     private boolean isMicMuted = false; // 마이크 음소거 상태를 나타내는 변수
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -159,6 +165,12 @@ public class webrtcActivity extends AppCompatActivity {
         if (mRoomName == null) {
             this.finish();
         }
+
+        // 다른 액티비티에서 SpeakerModeManager를 초기화하고 사용하는 예시
+        speakerModeManager = new SpeakerModeManager(this);
+// 스피커 모드를 활성화시킴
+        speakerModeManager.enableSpeakerMode();
+
 
         switchBtn = findViewById(R.id.switchbtn);
         micCtl = findViewById(R.id.mic_ctl);
@@ -193,12 +205,7 @@ public class webrtcActivity extends AppCompatActivity {
                 // 예: 앱 종료 기능 등
                 Toast.makeText(webrtcActivity.this, "나가기", Toast.LENGTH_SHORT).show();
 
-
                 hangup();
-
-                // 액티비티 종료
-                finish();
-
             }
         });
 
@@ -211,8 +218,14 @@ public class webrtcActivity extends AppCompatActivity {
     private void hangup() {
         Log.d(TAG, "hangup");
 
+        // 스피커 모드를 비활성화시킴
+        speakerModeManager.disableSpeakerMode();
+
         socket.emit("bye");
-        socket.close();
+        // 송출자 라면.
+        if (isInitiator) {
+            socket.emit("close_room", "cuarto");
+        }
 
         isInitiator = false;
         isChannelReady = false;
@@ -225,11 +238,24 @@ public class webrtcActivity extends AppCompatActivity {
             peerConnection = null;
         }
 
-        rootEglBase.release();
-        videoCapturer.dispose();
-        PeerConnectionFactory.shutdownInternalTracer();
+        socket.close();
+//        rootEglBase.release();
+//        videoCapturer.dispose();
+//        PeerConnectionFactory.shutdownInternalTracer();
 
 
+        if(close_room){
+            // 메인 스레드의 핸들러를 생성
+            Handler mainHandler = new Handler(Looper.getMainLooper());
+
+            // 핸들러를 사용하여 UI 업데이트 작업 수행
+            mainHandler.post(() -> {
+                Toast.makeText(this, "방송이 종료되었습니다.", Toast.LENGTH_SHORT).show();
+            });
+        }
+
+        // 액티비티 종료
+        finish();
     }
 
 
@@ -292,6 +318,7 @@ public class webrtcActivity extends AppCompatActivity {
 
         // 권한이 있는지 확인
         if (EasyPermissions.hasPermissions(this, perms)) {
+
 
             rootEglBase = EglBase.create();
 
@@ -361,7 +388,7 @@ public class webrtcActivity extends AppCompatActivity {
                 Log.d(TAG, "connectToSignallingServer: Another peer made a request to join room");
                 Log.d(TAG, "connectToSignallingServer: This peer is the initiator of room");
                 isChannelReady = true;
-                if(isInitiator){
+                if (isInitiator) {
                     // 피어 연결 팩토리 초기화
                     initializePeerConnectionFactory();
 
@@ -377,12 +404,19 @@ public class webrtcActivity extends AppCompatActivity {
                 viewerId = (String) args[1]; // 시청자 ID를 가져옴
                 doViewer(viewerId);
             }).on("get_viewer", args -> {
-                Log.e(TAG, "connectToSignallingServer:  get_viewer 실행" );
+                Log.e(TAG, "connectToSignallingServer:  get_viewer 실행");
                 viewerId = (String) args[0]; // 시청자 ID를 가져옴
-                Log.e(TAG, "connectToSignallingServer:  get_viewer 실행"+ viewerId );
+                Log.e(TAG, "connectToSignallingServer:  get_viewer 실행" + viewerId);
                 maybeStart(viewerId);
             }).on("viewer", args -> {
                 isChannelReady = true;
+            }).on("close_room", args -> {
+                Log.e(TAG, "방송종료");
+
+                close_room = true;
+
+                hangup(); // 방송 종료 처리
+
             }).on("log", args -> {
                 for (Object arg : args) {
 //                    Log.e(TAG, "sever_log " + String.valueOf(arg));
@@ -461,7 +495,7 @@ public class webrtcActivity extends AppCompatActivity {
                     message.put("type", "answer");
                     message.put("sdp", sessionDescription.description);
                     message.put("sender", viewerId);
-                    message.put("receiver",creater_Id );
+                    message.put("receiver", creater_Id);
                     sendMessage(message);
                 } catch (JSONException e) {
                     e.printStackTrace();
@@ -641,12 +675,12 @@ public class webrtcActivity extends AppCompatActivity {
                     message.put("label", iceCandidate.sdpMLineIndex);
                     message.put("id", iceCandidate.sdpMid);
                     message.put("candidate", iceCandidate.sdp);
-                    if(initiator_id != null){
+                    if (initiator_id != null) {
                         message.put("sender", initiator_id);
                         message.put("receiver", viewerId);
                     } else {
                         message.put("sender", viewerId);
-                        message.put("receiver",creater_Id );
+                        message.put("receiver", creater_Id);
                     }
 
                     Log.d(TAG, "onIceCandidate: sending candidate " + message);
