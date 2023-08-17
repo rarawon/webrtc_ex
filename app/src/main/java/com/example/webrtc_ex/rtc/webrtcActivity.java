@@ -10,6 +10,8 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import android.Manifest;
 import android.app.AlertDialog;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -47,7 +49,12 @@ import org.webrtc.VideoSource;
 import org.webrtc.VideoTrack;
 
 import java.net.URISyntaxException;
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -145,6 +152,12 @@ public class webrtcActivity extends AppCompatActivity {
 
     private VideoCapturer videoCapturer;
 
+    DataChannel localDataChannel;
+
+    DataChannel localDataChannel1;
+
+    ImageView sendImageView;
+
 
     private String viewerId;
 
@@ -155,6 +168,30 @@ public class webrtcActivity extends AppCompatActivity {
     private boolean isMicMuted = false; // 마이크 음소거 상태를 나타내는 변수
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
     private boolean enableAudio = true;
+
+    private boolean dataChannelInitialized = false; // 초기화 여부를 나타내는 변수
+
+
+    int incomingFileSize;
+    int currentIndexPointer;
+    byte[] imageFileBytes;
+    boolean receivingFile;
+
+    @Override
+    public void onBackPressed() {
+
+        // 예: 앱 종료 기능 등
+        if (isInitiator) {
+            Toast.makeText(webrtcActivity.this, "방송 종료", Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(webrtcActivity.this, "시청 종료", Toast.LENGTH_SHORT).show();
+        }
+
+
+        hangup();
+
+        super.onBackPressed();
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -203,9 +240,24 @@ public class webrtcActivity extends AppCompatActivity {
             public void onClick(View view) {
                 // exitBtn을 클릭했을 때의 동작을 처리하는 코드를 작성하세요
                 // 예: 앱 종료 기능 등
-                Toast.makeText(webrtcActivity.this, "나가기", Toast.LENGTH_SHORT).show();
-
+                if (isInitiator) {
+                    Toast.makeText(webrtcActivity.this, "방송 종료", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(webrtcActivity.this, "시청 종료", Toast.LENGTH_SHORT).show();
+                }
                 hangup();
+            }
+        });
+
+        sendImageView = findViewById(R.id.send);
+
+        sendImageView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                // 이곳에서 채팅 메시지를 보내는 메서드를 호출하면 됩니다.
+
+                Toast.makeText(webrtcActivity.this, "채팅 발송", Toast.LENGTH_SHORT).show();
+                send_data("반갑습니다.");
             }
         });
 
@@ -224,27 +276,32 @@ public class webrtcActivity extends AppCompatActivity {
         socket.emit("bye");
         // 송출자 라면.
         if (isInitiator) {
-            socket.emit("close_room", "cuarto");
+            socket.emit("close_room", mRoomName);
+
+            videoTrackFromCamera.dispose();
+//            videoCapturer.dispose();
+//
+            mLocalVideoView.release();
+
+//            videoSource.dispose();
+//            audioSource.dispose();
+//            localAudioTrack.dispose();
+//            mediaStream.dispose();
+//            audioSource.dispose();
+//            PeerConnectionFactory.shutdownInternalTracer();
         }
+
+//        peerConnection.close();
+//        peerConnection.dispose();
+//        peerConnection = null;
 
         isInitiator = false;
         isChannelReady = false;
         isStarted = false;
-
-        // WebRTC 통화 종료 및 관련 리소스 해제
-        if (peerConnection != null) {
-            peerConnection.close();
-            peerConnection.dispose();
-            peerConnection = null;
-        }
-
-        socket.close();
 //        rootEglBase.release();
-//        videoCapturer.dispose();
-//        PeerConnectionFactory.shutdownInternalTracer();
+        socket.close();
 
-
-        if(close_room){
+        if (close_room) {
             // 메인 스레드의 핸들러를 생성
             Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -306,6 +363,7 @@ public class webrtcActivity extends AppCompatActivity {
 
         // 피어 연결 초기화
         initializePeerConnections();
+
 
         // 메시지 전송
         socket.emit("get_viewer", viewerId);
@@ -373,7 +431,7 @@ public class webrtcActivity extends AppCompatActivity {
             // 소켓 이벤트 핸들링
             socket.on(EVENT_CONNECT, args -> {
                 Log.d(TAG, "connectToSignallingServer: connect");
-                socket.emit("create or join", "cuarto");
+                socket.emit("create or join", mRoomName);
             }).on("ipaddr", args -> {
                 Log.d(TAG, "connectToSignallingServer: ipaddr");
             }).on("created", args -> {
@@ -388,6 +446,9 @@ public class webrtcActivity extends AppCompatActivity {
                 Log.d(TAG, "connectToSignallingServer: Another peer made a request to join room");
                 Log.d(TAG, "connectToSignallingServer: This peer is the initiator of room");
                 isChannelReady = true;
+
+                viewerId = (String) args[1]; // 시청자 ID를 가져옴
+
                 if (isInitiator) {
                     // 피어 연결 팩토리 초기화
                     initializePeerConnectionFactory();
@@ -614,7 +675,42 @@ public class webrtcActivity extends AppCompatActivity {
     private void initializePeerConnections() {
         // 팩토리를 사용하여 PeerConnection 생성
         peerConnection = createPeerConnection(factory);
+
+        // DataChannel 초기화
+        localDataChannel = peerConnection.createDataChannel("sendDataChannel", new DataChannel.Init());
+
+        localDataChannel.registerObserver(new DataChannel.Observer() {
+            @Override
+            public void onBufferedAmountChange(long l) {
+                // 데이터 버퍼링 상태 변경
+            }
+
+            @Override
+            public void onStateChange() {
+                // 데이터 채널 상태 변경
+                Log.d(TAG, "onStateChange: " + localDataChannel.state().toString());
+
+                runOnUiThread(() -> {
+                    if (localDataChannel.state() == DataChannel.State.OPEN) {
+                        Log.e(TAG, "onStateChange: 열림");
+                        sendImageView.setEnabled(true);
+                    } else {
+                        Log.e(TAG, "onStateChange: 닫힘");
+                        sendImageView.setEnabled(false);
+                    }
+                });
+            }
+
+            @Override
+            public void onMessage(DataChannel.Buffer buffer) {
+
+            }
+
+        });
+
+
     }
+
 
     /**
      * 비디오 스트리밍을 시작하는 메서드
@@ -713,17 +809,91 @@ public class webrtcActivity extends AppCompatActivity {
 
             @Override
             public void onDataChannel(DataChannel dataChannel) {
-                Log.d(TAG, "onDataChannel: ");
+                Log.d(TAG, "onDataChannel: is local: state: " + dataChannel.state());
+                dataChannel.registerObserver(new DataChannel.Observer() {
+                    @Override
+                    public void onBufferedAmountChange(long l) {
+
+                    }
+
+                    @Override
+                    public void onStateChange() {
+                        Log.d(TAG, "onStateChange: remote data channel state: " + dataChannel.state().toString());
+                    }
+
+                    @Override
+                    public void onMessage(DataChannel.Buffer buffer) {
+                        Log.d(TAG, "onMessage: got message");
+                        readIncomingMessage(buffer.data);
+                    }
+                });
             }
 
             @Override
             public void onRenegotiationNeeded() {
                 Log.d(TAG, "onRenegotiationNeeded: ");
             }
+
         };
 
         return factory.createPeerConnection(rtcConfig, pcConstraints, pcObserver);
     }
+
+
+    // 메시지 보내기
+    private void send_data(String messageToSend) {
+        ByteBuffer data = stringToByteBuffer("-s" + messageToSend, Charset.defaultCharset());
+
+        localDataChannel.send(new DataChannel.Buffer(data, false));
+
+//        if(localDataChannel1 != null){
+//            localDataChannel1.send(new DataChannel.Buffer(data, false));
+//        }
+
+
+//        for (DataChannel dataChannel : dataChannels.values()) {
+//            Log.e(TAG, "send_data: 실행" );
+//            dataChannel.send(new DataChannel.Buffer(data, false));
+//        }
+//        // 모든 채널에 메시지 보내기
+//        for (DataChannel dataChannel : dataChannels) {
+//            Log.e(TAG, "send_data: 채널 돌아가며며" );
+//           dataChannel.send(new DataChannel.Buffer(data, false));
+//        }
+    }
+
+//    public void send_data(View view) {
+//        String message = "안녕 hello";
+//        if (message.isEmpty()) {
+//            return;
+//        }
+//
+//        ByteBuffer data = stringToByteBuffer("-s" + message, Charset.defaultCharset());
+//        localDataChannel.send(new DataChannel.Buffer(data, false));
+//    }
+
+    private static ByteBuffer stringToByteBuffer(String msg, Charset charset) {
+        return ByteBuffer.wrap(msg.getBytes(charset));
+    }
+
+    private void readIncomingMessage(ByteBuffer buffer) {
+        byte[] bytes;
+        if (buffer.hasArray()) {
+            bytes = buffer.array();
+        } else {
+            bytes = new byte[buffer.remaining()];
+            buffer.get(bytes);
+        }
+
+
+        String firstMessage = new String(bytes, Charset.defaultCharset());
+        String type = firstMessage.substring(0, 2);
+
+        runOnUiThread(() ->
+                Toast.makeText(this, " 수신 했습니다!" + firstMessage, Toast.LENGTH_SHORT).show());
+
+    }
+
 
     /**
      * 비디오 캡처러를 생성하는 메서드

@@ -42,6 +42,13 @@
                     app:srcCompat="@drawable/baseline_exit_to_app_24"
                     android:layout_weight="1" />
 
+                <ImageView
+                    android:id="@+id/send"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    app:srcCompat="@drawable/baseline_send_24"
+                    android:layout_weight="1" />
+
             </LinearLayout>
         </androidx.appcompat.widget.Toolbar>
 
